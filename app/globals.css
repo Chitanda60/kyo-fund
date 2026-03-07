@@ -93,7 +93,7 @@
 html,
 body {
   height: 100%;
-  overflow-x: hidden;
+  overflow-x: clip;
 }
 
 body {
@@ -784,7 +784,7 @@ body::before {
 @media (max-width: 640px) {
   .content {
     padding-top: 140px;
-    overflow-x: hidden;
+    overflow-x: clip;
   }
 
   .navbar {
@@ -950,7 +950,7 @@ input[type="number"] {
     padding: 12px;
     width: 100%;
     max-width: 100%;
-    overflow-x: hidden;
+    overflow-x: clip;
   }
 
   .grid {
