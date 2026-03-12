@@ -82,6 +82,7 @@ fabric.properties
 .vscode/
 
 .env.local
+.env.save
 .DS_Store
 .idea/*
 .husky/_/
