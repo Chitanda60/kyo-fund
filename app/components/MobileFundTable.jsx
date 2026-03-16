@@ -554,7 +554,7 @@ export default function MobileFundTable({
                 }
               }}
             >
-              {masked ? '******' : holdingAmountDisplay}
+              {masked ? <span className="mask-text">******</span> : holdingAmountDisplay}
               {hasDca && <span className="dca-indicator">定</span>}
               {isUpdated && <span className="updated-indicator">✓</span>}
             </span>
@@ -660,6 +660,7 @@ export default function MobileFundTable({
         cell: (info) => {
           const original = info.row.original || {};
           const date = original.latestNavDate ?? '-';
+          const displayDate = typeof date === 'string' && date.length > 5 ? date.slice(5) : date;
           return (
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 0 }}>
               <span style={{ display: 'block', width: '100%', fontWeight: 700 }}>
@@ -667,7 +668,7 @@ export default function MobileFundTable({
                   {info.getValue() ?? '—'}
                 </FitText>
               </span>
-              <span className="muted" style={{ fontSize: '10px' }}>{date}</span>
+              <span className="muted" style={{ fontSize: '10px' }}>{displayDate}</span>
             </div>
           );
         },
@@ -680,15 +681,19 @@ export default function MobileFundTable({
           const original = info.row.original || {};
           const date = original.estimateNavDate ?? '-';
           const displayDate = typeof date === 'string' && date.length > 5 ? date.slice(5) : date;
+          const estimateNav = info.getValue();
+          const hasEstimateNav = estimateNav != null && estimateNav !== '—';
 
           return (
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 0 }}>
               <span style={{ display: 'block', width: '100%', fontWeight: 700 }}>
                 <FitText maxFontSize={14} minFontSize={10}>
-                  {info.getValue() ?? '—'}
+                  {estimateNav ?? '—'}
                 </FitText>
               </span>
-              <span className="muted" style={{ fontSize: '10px' }}>{displayDate}</span>
+              {hasEstimateNav && displayDate && displayDate !== '-' ? (
+                <span className="muted" style={{ fontSize: '10px' }}>{displayDate}</span>
+              ) : null}
             </div>
           );
         },
@@ -701,13 +706,14 @@ export default function MobileFundTable({
           const original = info.row.original || {};
           const value = original.yesterdayChangeValue;
           const date = original.yesterdayDate ?? '-';
+          const displayDate = typeof date === 'string' && date.length > 5 ? date.slice(5) : date;
           const cls = value > 0 ? 'up' : value < 0 ? 'down' : '';
           return (
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 0 }}>
               <span className={cls} style={{ fontWeight: 700 }}>
                 {info.getValue() ?? '—'}
               </span>
-              <span className="muted" style={{ fontSize: '10px' }}>{date}</span>
+              <span className="muted" style={{ fontSize: '10px' }}>{displayDate}</span>
             </div>
           );
         },
@@ -723,12 +729,16 @@ export default function MobileFundTable({
           const time = original.estimateTime ?? '-';
           const displayTime = typeof time === 'string' && time.length > 5 ? time.slice(5) : time;
           const cls = isMuted ? 'muted' : value > 0 ? 'up' : value < 0 ? 'down' : '';
+          const text = info.getValue();
+          const hasText = text != null && text !== '—';
           return (
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 0 }}>
               <span className={cls} style={{ fontWeight: 700 }}>
-                {info.getValue() ?? '—'}
+                {text ?? '—'}
               </span>
-              <span className="muted" style={{ fontSize: '10px' }}>{displayTime}</span>
+              {hasText && displayTime && displayTime !== '-' ? (
+                <span className="muted" style={{ fontSize: '10px' }}>{displayTime}</span>
+              ) : null}
             </div>
           );
         },
@@ -749,7 +759,7 @@ export default function MobileFundTable({
             <div style={{ width: '100%' }}>
               <span className={cls} style={{ display: 'block', width: '100%', fontWeight: 700 }}>
                 <FitText maxFontSize={14} minFontSize={10}>
-                  {masked && hasProfit ? '******' : amountStr}
+                  {masked && hasProfit ? <span className="mask-text">******</span> : amountStr}
                 </FitText>
               </span>
               {hasProfit && percentStr && !masked ? (
@@ -779,7 +789,7 @@ export default function MobileFundTable({
             <div style={{ width: '100%' }}>
               <span className={cls} style={{ display: 'block', width: '100%', fontWeight: 700 }}>
                 <FitText maxFontSize={14} minFontSize={10}>
-                  {masked && hasProfit ? '******' : amountStr}
+                  {masked && hasProfit ? <span className="mask-text">******</span> : amountStr}
                 </FitText>
               </span>
               {percentStr && !isUpdated && !masked ? (
@@ -808,7 +818,7 @@ export default function MobileFundTable({
             <div style={{ width: '100%' }}>
               <span className={cls} style={{ display: 'block', width: '100%', fontWeight: 700 }}>
                 <FitText maxFontSize={14} minFontSize={10}>
-                  {masked && hasTotal ? '******' : amountStr}
+                  {masked && hasTotal ? <span className="mask-text">******</span> : amountStr}
                 </FitText>
               </span>
               {percentStr && !masked ? (
@@ -1003,7 +1013,7 @@ export default function MobileFundTable({
                 strategy={verticalListSortingStrategy}
               >
                 <AnimatePresence mode="popLayout">
-                  {table.getRowModel().rows.map((row) => (
+                  {table.getRowModel().rows.map((row, index) => (
                     <SortableRow
                       key={row.original.code || row.id}
                       row={row}
@@ -1015,7 +1025,7 @@ export default function MobileFundTable({
                           ref={sortBy === 'default' && !isNameSortMode ? setActivatorNodeRef : undefined}
                           className="table-row"
                           style={{
-                            background: 'var(--bg)',
+                            background: index % 2 === 0 ? 'var(--bg)' : 'var(--table-row-alt-bg)',
                             position: 'relative',
                             zIndex: 1,
                             ...(mobileGridLayout.gridTemplateColumns ? { gridTemplateColumns: mobileGridLayout.gridTemplateColumns } : {}),
@@ -1029,11 +1039,19 @@ export default function MobileFundTable({
                             const alignClass = getAlignClass(columnId);
                             const cellClassName = cell.column.columnDef.meta?.cellClassName || '';
                             const isLastColumn = cellIndex === row.getVisibleCells().length - 1;
+                            const style = isLastColumn ? {paddingRight: LAST_COLUMN_EXTRA} : {};
+                            if (cellIndex  === 0) {
+                              if (index % 2 !== 0) {
+                                style.background = 'var(--table-row-alt-bg)';
+                              }else {
+                                style.background = 'var(--bg)';
+                              }
+                            }
                             return (
                               <div
                                 key={cell.id}
                                 className={`table-cell ${alignClass} ${cellClassName} ${pinClass}`}
-                                style={isLastColumn ? { paddingRight: LAST_COLUMN_EXTRA } : undefined}
+                                style={style}
                               >
                                 {flexRender(cell.column.columnDef.cell, cell.getContext())}
                               </div>
