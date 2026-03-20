@@ -71,6 +71,13 @@ import packageJson from '../package.json';
 import PcFundTable from './components/PcFundTable';
 import MobileFundTable from './components/MobileFundTable';
 import { useFundFuzzyMatcher } from './hooks/useFundFuzzyMatcher';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -129,6 +136,7 @@ export default function HomePage() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [tempSeconds, setTempSeconds] = useState(60);
   const [containerWidth, setContainerWidth] = useState(1200);
+  const [showMarketIndex, setShowMarketIndex] = useState(true);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -140,6 +148,9 @@ export default function HomePage() {
       const num = Number(w);
       if (Number.isFinite(num)) {
         setContainerWidth(Math.min(2000, Math.max(600, num)));
+      }
+      if (typeof parsed?.showMarketIndex === 'boolean') {
+        setShowMarketIndex(parsed.showMarketIndex);
       }
     } catch { }
   }, []);
@@ -167,15 +178,19 @@ export default function HomePage() {
     { id: 'default', label: '默认', enabled: true },
     // 估值涨幅为原始名称，“涨跌幅”为别名
     { id: 'yield', label: '估值涨幅', alias: '涨跌幅', enabled: true },
+    // 昨日涨幅排序：默认隐藏
+    { id: 'yesterdayIncrease', label: '昨日涨幅', enabled: false },
     // 持仓金额排序：默认隐藏
     { id: 'holdingAmount', label: '持仓金额', enabled: false },
     { id: 'holding', label: '持有收益', enabled: true },
     { id: 'name', label: '基金名称', alias: '名称', enabled: true },
   ];
+  const SORT_DISPLAY_MODES = new Set(['buttons', 'dropdown']);
 
   // 排序状态
-  const [sortBy, setSortBy] = useState('default'); // default, name, yield, holding, holdingAmount
+  const [sortBy, setSortBy] = useState('default'); // default, name, yield, yesterdayIncrease, holding, holdingAmount
   const [sortOrder, setSortOrder] = useState('desc'); // asc | desc
+  const [sortDisplayMode, setSortDisplayMode] = useState('buttons'); // buttons | dropdown
   const [isSortLoaded, setIsSortLoaded] = useState(false);
   const [sortRules, setSortRules] = useState(DEFAULT_SORT_RULES);
   const [sortSettingOpen, setSortSettingOpen] = useState(false);
@@ -196,6 +211,13 @@ export default function HomePage() {
           const parsed = JSON.parse(rawSettings);
           if (parsed && Array.isArray(parsed.localSortRules)) {
             rulesFromSettings = parsed.localSortRules;
+          }
+          if (
+            parsed &&
+            typeof parsed.localSortDisplayMode === 'string' &&
+            SORT_DISPLAY_MODES.has(parsed.localSortDisplayMode)
+          ) {
+            setSortDisplayMode(parsed.localSortDisplayMode);
           }
         }
       } catch {
@@ -265,6 +287,7 @@ export default function HomePage() {
         const next = {
           ...(parsed && typeof parsed === 'object' ? parsed : {}),
           localSortRules: sortRules,
+          localSortDisplayMode: sortDisplayMode,
         };
         window.localStorage.setItem('customSettings', JSON.stringify(next));
         // 更新后标记 customSettings 脏并触发云端同步
@@ -273,7 +296,7 @@ export default function HomePage() {
         // ignore
       }
     }
-  }, [sortBy, sortOrder, sortRules, isSortLoaded]);
+  }, [sortBy, sortOrder, sortRules, sortDisplayMode, isSortLoaded]);
 
   // 当用户关闭某个排序规则时，如果当前 sortBy 不再可用，则自动切换到第一个启用的规则
   useEffect(() => {
@@ -686,6 +709,19 @@ export default function HomePage() {
           const amountB = pb?.amount ?? Number.NEGATIVE_INFINITY;
           return sortOrder === 'asc' ? amountA - amountB : amountB - amountA;
         }
+        if (sortBy === 'yesterdayIncrease') {
+          const valA = Number(a.zzl);
+          const valB = Number(b.zzl);
+          const hasA = Number.isFinite(valA);
+          const hasB = Number.isFinite(valB);
+
+          // 无昨日涨幅数据（界面展示为 `—`）的基金统一排在最后
+          if (!hasA && !hasB) return 0;
+          if (!hasA) return 1;
+          if (!hasB) return -1;
+
+          return sortOrder === 'asc' ? valA - valB : valB - valA;
+        }
         if (sortBy === 'holding') {
           const pa = getHoldingProfit(a, holdings[a.code]);
           const pb = getHoldingProfit(b, holdings[b.code]);
@@ -883,7 +919,21 @@ export default function HomePage() {
 
   const handleClearConfirm = () => {
     if (clearConfirm?.fund) {
-      handleSaveHolding(clearConfirm.fund.code, { share: null, cost: null });
+      const code = clearConfirm.fund.code;
+      handleSaveHolding(code, { share: null, cost: null });
+
+      setTransactions(prev => {
+        const next = { ...(prev || {}) };
+        delete next[code];
+        storageHelper.setItem('transactions', JSON.stringify(next));
+        return next;
+      });
+
+      setPendingTrades(prev => {
+        const next = prev.filter(trade => trade.fundCode !== code);
+        storageHelper.setItem('pendingTrades', JSON.stringify(next));
+        return next;
+      });
     }
     setClearConfirm(null);
   };
@@ -1039,6 +1089,11 @@ export default function HomePage() {
         const next = [...pendingTrades, pending];
         setPendingTrades(next);
         storageHelper.setItem('pendingTrades', JSON.stringify(next));
+
+        // 如果该基金没有持仓数据，初始化持仓金额为 0
+        if (!holdings[fund.code]) {
+          handleSaveHolding(fund.code, { share: 0, cost: 0 });
+        }
 
         setTradeModal({ open: false, fund: null, type: 'buy' });
         showToast('净值暂未更新，已加入待处理队列', 'info');
@@ -2751,19 +2806,25 @@ export default function HomePage() {
     await refreshAll(codes);
   };
 
-  const saveSettings = (e, secondsOverride) => {
+  const saveSettings = (e, secondsOverride, showMarketIndexOverride) => {
     e?.preventDefault?.();
     const seconds = secondsOverride ?? tempSeconds;
+    const shouldShowMarketIndex = typeof showMarketIndexOverride === 'boolean' ? showMarketIndexOverride : showMarketIndex;
     const ms = Math.max(30, Number(seconds)) * 1000;
     setTempSeconds(Math.round(ms / 1000));
     setRefreshMs(ms);
+    setShowMarketIndex(shouldShowMarketIndex);
     storageHelper.setItem('refreshMs', String(ms));
     const w = Math.min(2000, Math.max(600, Number(containerWidth) || 1200));
     setContainerWidth(w);
     try {
       const raw = window.localStorage.getItem('customSettings');
       const parsed = raw ? JSON.parse(raw) : {};
-      window.localStorage.setItem('customSettings', JSON.stringify({ ...parsed, pcContainerWidth: w }));
+      window.localStorage.setItem('customSettings', JSON.stringify({
+        ...parsed,
+        pcContainerWidth: w,
+        showMarketIndex: shouldShowMarketIndex,
+      }));
       triggerCustomSettingsSync();
     } catch { }
     setSettingsOpen(false);
@@ -3165,9 +3226,10 @@ export default function HomePage() {
   const fetchCloudConfig = async (userId, checkConflict = false) => {
     if (!userId) return;
     try {
+      // 一次查询同时拿到 meta 与 data，方便两种模式复用
       const { data: meta, error: metaError } = await supabase
         .from('user_configs')
-        .select(`id, updated_at${checkConflict ? ', data' : ''}`)
+        .select('id, data, updated_at')
         .eq('user_id', userId)
         .maybeSingle();
 
@@ -3181,44 +3243,19 @@ export default function HomePage() {
         setCloudConfigModal({ open: true, userId, type: 'empty' });
         return;
       }
+
+      // 冲突检查模式：使用 meta.data 弹出冲突确认弹窗
       if (checkConflict) {
         setCloudConfigModal({ open: true, userId, type: 'conflict', cloudData: meta.data });
         return;
       }
 
-      const localUpdatedAt = window.localStorage.getItem('localUpdatedAt');
-      if (localUpdatedAt && meta.updated_at && new Date(meta.updated_at) < new Date(localUpdatedAt)) {
+      // 非冲突检查模式：直接复用上方查询到的 meta 数据，覆盖本地
+      if (meta.data && isPlainObject(meta.data) && Object.keys(meta.data).length > 0) {
+        await applyCloudConfig(meta.data, meta.updated_at);
         return;
       }
 
-      const { data, error } = await supabase
-        .from('user_configs')
-        .select('id, data, updated_at')
-        .eq('user_id', userId)
-        .maybeSingle();
-
-      if (error) throw error;
-
-      if (data?.data && isPlainObject(data.data) && Object.keys(data.data).length > 0) {
-        const localPayload = collectLocalPayload();
-        const localComparable = getComparablePayload(localPayload);
-        const cloudComparable = getComparablePayload(data.data);
-
-        if (localComparable !== cloudComparable) {
-          // 如果数据不一致
-          if (checkConflict) {
-            // 只有明确要求检查冲突时才提示（例如刚登录时）
-            setCloudConfigModal({ open: true, userId, type: 'conflict', cloudData: data.data });
-            return;
-          }
-          // 否则直接覆盖本地（例如已登录状态下的刷新）
-          await applyCloudConfig(data.data, data.updated_at);
-          return;
-        }
-
-        await applyCloudConfig(data.data, data.updated_at);
-        return;
-      }
       setCloudConfigModal({ open: true, userId, type: 'empty' });
     } catch (e) {
       console.error('获取云端配置失败', e);
@@ -3945,13 +3982,15 @@ export default function HomePage() {
           </div>
         </div>
       </div>
-      <MarketIndexAccordion
-        navbarHeight={navbarHeight}
-        onHeightChange={setMarketIndexAccordionHeight}
-        isMobile={isMobile}
-        onCustomSettingsChange={triggerCustomSettingsSync}
-        refreshing={refreshing}
-      />
+      {showMarketIndex && (
+        <MarketIndexAccordion
+          navbarHeight={navbarHeight}
+          onHeightChange={setMarketIndexAccordionHeight}
+          isMobile={isMobile}
+          onCustomSettingsChange={triggerCustomSettingsSync}
+          refreshing={refreshing}
+        />
+      )}
       <div className="grid">
         <div className="col-12">
           <div ref={filterBarRef} className="filter-bar" style={{ top: navbarHeight + marketIndexAccordionHeight, marginTop: 0, marginBottom: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
@@ -4075,40 +4114,81 @@ export default function HomePage() {
                   <span className="muted">排序</span>
                   <SettingsIcon width="14" height="14" />
                 </button>
-                <div className="chips">
-                  {sortRules.filter((s) => s.enabled).map((s) => (
-                    <button
-                      key={s.id}
-                      className={`chip ${sortBy === s.id ? 'active' : ''}`}
-                      onClick={() => {
-                        if (sortBy === s.id) {
-                          // 同一按钮重复点击，切换升序/降序
-                          setSortOrder((prev) => (prev === 'asc' ? 'desc' : 'asc'));
-                        } else {
-                          // 切换到新的排序字段，默认用降序
-                          setSortBy(s.id);
-                          setSortOrder('desc');
-                        }
+                {sortDisplayMode === 'dropdown' ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Select
+                      value={sortBy}
+                      onValueChange={(nextSortBy) => {
+                        setSortBy(nextSortBy);
+                        if (nextSortBy !== sortBy) setSortOrder('desc');
                       }}
-                      style={{ height: '28px', fontSize: '12px', padding: '0 10px', display: 'flex', alignItems: 'center', gap: 4 }}
                     >
-                      <span>{s.alias || s.label}</span>
-                      {s.id !== 'default' && sortBy === s.id && (
-                        <span
-                          style={{
-                            display: 'inline-flex',
-                            flexDirection: 'column',
-                            lineHeight: 1,
-                            fontSize: '8px',
-                          }}
-                        >
-                          <span style={{ opacity: sortOrder === 'asc' ? 1 : 0.3 }}>▲</span>
-                          <span style={{ opacity: sortOrder === 'desc' ? 1 : 0.3 }}>▼</span>
-                        </span>
-                      )}
-                    </button>
-                  ))}
-                </div>
+                      <SelectTrigger
+                        className="h-4 min-w-[110px] py-0 text-xs shadow-none"
+                        style={{ background: 'var(--card-bg)', height: 36 }}
+                      >
+                        <SelectValue placeholder="选择排序规则" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {sortRules.filter((s) => s.enabled).map((s) => (
+                          <SelectItem key={s.id} value={s.id}>
+                            {s.alias || s.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Select
+                      value={sortOrder}
+                      onValueChange={(value) => setSortOrder(value)}
+                    >
+                      <SelectTrigger
+                        className="h-4 min-w-[84px] py-0 text-xs shadow-none"
+                        style={{ background: 'var(--card-bg)', height: 36 }}
+                      >
+                        <SelectValue placeholder="排序方向" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="desc">降序</SelectItem>
+                        <SelectItem value="asc">升序</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                ) : (
+                  <div className="chips">
+                    {sortRules.filter((s) => s.enabled).map((s) => (
+                      <button
+                        key={s.id}
+                        className={`chip ${sortBy === s.id ? 'active' : ''}`}
+                        onClick={() => {
+                          if (sortBy === s.id) {
+                            // 同一按钮重复点击，切换升序/降序
+                            setSortOrder((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+                          } else {
+                            // 切换到新的排序字段，默认用降序
+                            setSortBy(s.id);
+                            setSortOrder('desc');
+                          }
+                        }}
+                        style={{ height: '28px', fontSize: '12px', padding: '0 10px', display: 'flex', alignItems: 'center', gap: 4 }}
+                      >
+                        <span>{s.alias || s.label}</span>
+                        {s.id !== 'default' && sortBy === s.id && (
+                          <span
+                            style={{
+                              display: 'inline-flex',
+                              flexDirection: 'column',
+                              lineHeight: 1,
+                              fontSize: '8px',
+                            }}
+                          >
+                            <span style={{ opacity: sortOrder === 'asc' ? 1 : 0.3 }}>▲</span>
+                            <span style={{ opacity: sortOrder === 'desc' ? 1 : 0.3 }}>▼</span>
+                          </span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -4513,6 +4593,7 @@ export default function HomePage() {
             onClose={() => setActionModal({ open: false, fund: null })}
             onAction={(type) => handleAction(type, actionModal.fund)}
             hasHistory={!!transactions[actionModal.fund?.code]?.length}
+            pendingCount={pendingTrades.filter(t => t.fundCode === actionModal.fund?.code).length}
           />
         )}
       </AnimatePresence>
@@ -4621,6 +4702,12 @@ export default function HomePage() {
             holding={holdings[holdingModal.fund?.code]}
             onClose={() => setHoldingModal({ open: false, fund: null })}
             onSave={(data) => handleSaveHolding(holdingModal.fund?.code, data)}
+            onOpenTrade={() => {
+              const f = holdingModal.fund;
+              if (!f) return;
+              setHoldingModal({ open: false, fund: null });
+              setTradeModal({ open: true, fund: f, type: 'buy' });
+            }}
           />
         )}
       </AnimatePresence>
@@ -4723,19 +4810,18 @@ export default function HomePage() {
           containerWidth={containerWidth}
           setContainerWidth={setContainerWidth}
           onResetContainerWidth={handleResetContainerWidth}
+          showMarketIndex={showMarketIndex}
+          setShowMarketIndex={setShowMarketIndex}
         />
       )}
 
       {/* 更新提示弹窗 */}
-      <AnimatePresence>
-        {updateModalOpen && (
-          <UpdatePromptModal
-            updateContent={updateContent}
-            onClose={() => setUpdateModalOpen(false)}
-            onRefresh={() => window.location.reload()}
-          />
-        )}
-      </AnimatePresence>
+      <UpdatePromptModal
+        open={updateModalOpen}
+        updateContent={updateContent}
+        onClose={() => setUpdateModalOpen(false)}
+        onRefresh={() => window.location.reload()}
+      />
 
       <AnimatePresence>
         {isScanning && (
@@ -4778,6 +4864,8 @@ export default function HomePage() {
         isMobile={isMobile}
         rules={sortRules}
         onChangeRules={setSortRules}
+        sortDisplayMode={sortDisplayMode}
+        onChangeSortDisplayMode={setSortDisplayMode}
         onResetRules={() => setSortRules(DEFAULT_SORT_RULES)}
       />
 
