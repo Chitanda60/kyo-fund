@@ -136,7 +136,9 @@ export default function HomePage() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [tempSeconds, setTempSeconds] = useState(60);
   const [containerWidth, setContainerWidth] = useState(1200);
-  const [showMarketIndex, setShowMarketIndex] = useState(true);
+  const [showMarketIndexPc, setShowMarketIndexPc] = useState(true);
+  const [showMarketIndexMobile, setShowMarketIndexMobile] = useState(true);
+  const [isGroupSummarySticky, setIsGroupSummarySticky] = useState(false);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -149,9 +151,8 @@ export default function HomePage() {
       if (Number.isFinite(num)) {
         setContainerWidth(Math.min(2000, Math.max(600, num)));
       }
-      if (typeof parsed?.showMarketIndex === 'boolean') {
-        setShowMarketIndex(parsed.showMarketIndex);
-      }
+      if (typeof parsed?.showMarketIndexPc === 'boolean') setShowMarketIndexPc(parsed.showMarketIndexPc);
+      if (typeof parsed?.showMarketIndexMobile === 'boolean') setShowMarketIndexMobile(parsed.showMarketIndexMobile);
     } catch { }
   }, []);
 
@@ -417,6 +418,7 @@ export default function HomePage() {
       clearTimeout(timer);
     };
   }, [groups, currentTab]); // groups 或 tab 变化可能导致 filterBar 高度变化
+
   const handleMobileSearchClick = (e) => {
     e?.preventDefault();
     e?.stopPropagation();
@@ -468,6 +470,13 @@ export default function HomePage() {
       return () => window.removeEventListener('resize', checkMobile);
     }
   }, []);
+
+  const shouldShowMarketIndex = isMobile ? showMarketIndexMobile : showMarketIndexPc;
+
+  // 当关闭大盘指数时，重置它的高度，避免 top/stickyTop 仍沿用旧值
+  useEffect(() => {
+    if (!shouldShowMarketIndex) setMarketIndexAccordionHeight(0);
+  }, [shouldShowMarketIndex]);
 
   // 检查更新
   const [hasUpdate, setHasUpdate] = useState(false);
@@ -591,26 +600,30 @@ export default function HomePage() {
 
       if (canCalcTodayProfit) {
         const amount = holding.share * currentNav;
-        // 优先用 zzl (真实涨跌幅), 降级用 gszzl
-        // 若 gztime 日期 > jzrq，说明估值更新晚于净值日期，优先使用 gszzl 计算当日盈亏
-        const gz = isString(fund.gztime) ? toTz(fund.gztime) : null;
-        const jz = isString(fund.jzrq) ? toTz(fund.jzrq) : null;
-        const preferGszzl =
-          !!gz &&
-          !!jz &&
-          gz.isValid() &&
-          jz.isValid() &&
-          gz.startOf('day').isAfter(jz.startOf('day'));
-
-        let rate;
-        if (preferGszzl) {
-          rate = Number(fund.gszzl);
+        // 优先使用昨日净值直接计算（更精确，避免涨跌幅四舍五入误差）
+        const lastNav = fund.lastNav != null && fund.lastNav !== '' ? Number(fund.lastNav) : null;
+        if (lastNav && Number.isFinite(lastNav) && lastNav > 0) {
+          profitToday = (currentNav - lastNav) * holding.share;
         } else {
-          const zzl = fund.zzl !== undefined ? Number(fund.zzl) : Number.NaN;
-          rate = Number.isFinite(zzl) ? zzl : Number(fund.gszzl);
+          const gz = isString(fund.gztime) ? toTz(fund.gztime) : null;
+          const jz = isString(fund.jzrq) ? toTz(fund.jzrq) : null;
+          const preferGszzl =
+            !!gz &&
+            !!jz &&
+            gz.isValid() &&
+            jz.isValid() &&
+            gz.startOf('day').isAfter(jz.startOf('day'));
+
+          let rate;
+          if (preferGszzl) {
+            rate = Number(fund.gszzl);
+          } else {
+            const zzl = fund.zzl !== undefined ? Number(fund.zzl) : Number.NaN;
+            rate = Number.isFinite(zzl) ? zzl : Number(fund.gszzl);
+          }
+          if (!Number.isFinite(rate)) rate = 0;
+          profitToday = amount - (amount / (1 + rate / 100));
         }
-        if (!Number.isFinite(rate)) rate = 0;
-        profitToday = amount - (amount / (1 + rate / 100));
       } else {
         profitToday = null;
       }
@@ -781,6 +794,9 @@ export default function HomePage() {
         const holdingAmount =
           amount == null ? '未设置' : `¥${amount.toFixed(2)}`;
         const holdingAmountValue = amount;
+        const holdingDaysValue = holding?.firstPurchaseDate
+          ? dayjs.tz(todayStr, TZ).diff(dayjs.tz(holding.firstPurchaseDate, TZ), 'day')
+          : null;
 
         const profitToday = profit ? profit.profitToday : null;
         const todayProfit =
@@ -856,6 +872,7 @@ export default function HomePage() {
           estimateProfitPercent,
           holdingAmount,
           holdingAmountValue,
+          holdingDaysValue,
           todayProfit,
           todayProfitPercent,
           todayProfitValue,
@@ -2398,6 +2415,29 @@ export default function HomePage() {
     setLoginLoading(false);
   };
 
+  const handleGithubLogin = async () => {
+    setLoginError('');
+    if (!isSupabaseConfigured) {
+      showToast('未配置 Supabase，无法登录', 'error');
+      return;
+    }
+    try {
+      isExplicitLoginRef.current = true;
+      setLoginLoading(true);
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'github',
+        options: {
+          redirectTo: window.location.origin
+        }
+      });
+      if (error) throw error;
+    } catch (err) {
+      setLoginError(err.message || 'GitHub 登录失败，请稍后再试');
+      isExplicitLoginRef.current = false;
+      setLoginLoading(false);
+    }
+  };
+
   // 登出
   const handleLogout = async () => {
     isLoggingOutRef.current = true;
@@ -2806,25 +2846,41 @@ export default function HomePage() {
     await refreshAll(codes);
   };
 
-  const saveSettings = (e, secondsOverride, showMarketIndexOverride) => {
+  const saveSettings = (e, secondsOverride, showMarketIndexOverride, isMobileOverride) => {
     e?.preventDefault?.();
     const seconds = secondsOverride ?? tempSeconds;
-    const shouldShowMarketIndex = typeof showMarketIndexOverride === 'boolean' ? showMarketIndexOverride : showMarketIndex;
     const ms = Math.max(30, Number(seconds)) * 1000;
     setTempSeconds(Math.round(ms / 1000));
     setRefreshMs(ms);
-    setShowMarketIndex(shouldShowMarketIndex);
+    const nextShowMarketIndex = typeof showMarketIndexOverride === 'boolean'
+      ? showMarketIndexOverride
+      : isMobileOverride
+        ? showMarketIndexMobile
+        : showMarketIndexPc;
+
+    const targetIsMobile = Boolean(isMobileOverride);
+    if (targetIsMobile) setShowMarketIndexMobile(nextShowMarketIndex);
+    else setShowMarketIndexPc(nextShowMarketIndex);
     storageHelper.setItem('refreshMs', String(ms));
     const w = Math.min(2000, Math.max(600, Number(containerWidth) || 1200));
     setContainerWidth(w);
     try {
       const raw = window.localStorage.getItem('customSettings');
       const parsed = raw ? JSON.parse(raw) : {};
-      window.localStorage.setItem('customSettings', JSON.stringify({
-        ...parsed,
-        pcContainerWidth: w,
-        showMarketIndex: shouldShowMarketIndex,
-      }));
+      if (targetIsMobile) {
+        // 仅更新当前运行端对应的开关键
+        window.localStorage.setItem('customSettings', JSON.stringify({
+          ...parsed,
+          pcContainerWidth: w,
+          showMarketIndexMobile: nextShowMarketIndex,
+        }));
+      } else {
+        window.localStorage.setItem('customSettings', JSON.stringify({
+          ...parsed,
+          pcContainerWidth: w,
+          showMarketIndexPc: nextShowMarketIndex,
+        }));
+      }
       triggerCustomSettingsSync();
     } catch { }
     setSettingsOpen(false);
@@ -3527,7 +3583,6 @@ export default function HomePage() {
 
   useEffect(() => {
     const isAnyModalOpen =
-      settingsOpen ||
       feedbackOpen ||
       addResultOpen ||
       addFundToGroupOpen ||
@@ -3563,7 +3618,6 @@ export default function HomePage() {
       containerRef.current.style.overflow = '';
     };
   }, [
-    settingsOpen,
     feedbackOpen,
     addResultOpen,
     addFundToGroupOpen,
@@ -3982,7 +4036,7 @@ export default function HomePage() {
           </div>
         </div>
       </div>
-      {showMarketIndex && (
+      {shouldShowMarketIndex && (
         <MarketIndexAccordion
           navbarHeight={navbarHeight}
           onHeightChange={setMarketIndexAccordionHeight}
@@ -4207,48 +4261,13 @@ export default function HomePage() {
                   groupName={getGroupName()}
                   getProfit={getHoldingProfit}
                   stickyTop={navbarHeight + marketIndexAccordionHeight + filterBarHeight + (isMobile ? -14 : 0)}
+                  isSticky={isGroupSummarySticky}
+                  onToggleSticky={(next) => setIsGroupSummarySticky(next)}
                   masked={maskAmounts}
                   onToggleMasked={() => setMaskAmounts((v) => !v)}
+                  marketIndexAccordionHeight={marketIndexAccordionHeight}
+                  navbarHeight={navbarHeight}
                 />
-
-              {currentTab !== 'all' && currentTab !== 'fav' && (
-                <motion.button
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  className="button-dashed"
-                  onClick={() => setAddFundToGroupOpen(true)}
-                  style={{
-                    width: '100%',
-                    height: '48px',
-                    border: '2px dashed var(--border)',
-                    background: 'transparent',
-                    borderRadius: '12px',
-                    color: 'var(--muted)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: '8px',
-                    marginBottom: '16px',
-                    cursor: 'pointer',
-                    transition: 'all 0.2s ease',
-                    fontSize: '14px',
-                    fontWeight: 500
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.borderColor = 'var(--primary)';
-                    e.currentTarget.style.color = 'var(--primary)';
-                    e.currentTarget.style.background = 'rgba(34, 211, 238, 0.05)';
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.borderColor = 'var(--border)';
-                    e.currentTarget.style.color = 'var(--muted)';
-                    e.currentTarget.style.background = 'transparent';
-                  }}
-                >
-                  <PlusIcon width="18" height="18" />
-                  <span>添加基金到此分组</span>
-                </motion.button>
-              )}
 
               <AnimatePresence mode="wait">
                 <motion.div
@@ -4258,6 +4277,7 @@ export default function HomePage() {
                   exit={{ opacity: 0, y: -10 }}
                   transition={{ duration: 0.2 }}
                   className={viewMode === 'card' ? 'grid' : 'table-container glass'}
+                  style={{ marginTop: isGroupSummarySticky ? 50 : 0 }}
                 >
                   <div className={viewMode === 'card' ? 'grid col-12' : ''} style={viewMode === 'card' ? { gridColumn: 'span 12', gap: 16 } : {}}>
                     {/* PC 列表：使用 PcFundTable + 右侧冻结操作列 */}
@@ -4461,6 +4481,45 @@ export default function HomePage() {
                   </div>
                 </motion.div>
               </AnimatePresence>
+
+              {currentTab !== 'all' && currentTab !== 'fav' && (
+                <motion.button
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  className="button-dashed"
+                  onClick={() => setAddFundToGroupOpen(true)}
+                  style={{
+                    width: '100%',
+                    height: '48px',
+                    border: '2px dashed var(--border)',
+                    background: 'transparent',
+                    borderRadius: '12px',
+                    color: 'var(--muted)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '8px',
+                    marginTop: '16px',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s ease',
+                    fontSize: '14px',
+                    fontWeight: 500
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.borderColor = 'var(--primary)';
+                    e.currentTarget.style.color = 'var(--primary)';
+                    e.currentTarget.style.background = 'rgba(34, 211, 238, 0.05)';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.borderColor = 'var(--border)';
+                    e.currentTarget.style.color = 'var(--muted)';
+                    e.currentTarget.style.background = 'transparent';
+                  }}
+                >
+                  <PlusIcon width="18" height="18" />
+                  <span>添加基金到此分组</span>
+                </motion.button>
+              )}
             </>
           )}
         </div>
@@ -4810,8 +4869,8 @@ export default function HomePage() {
           containerWidth={containerWidth}
           setContainerWidth={setContainerWidth}
           onResetContainerWidth={handleResetContainerWidth}
-          showMarketIndex={showMarketIndex}
-          setShowMarketIndex={setShowMarketIndex}
+          showMarketIndexPc={showMarketIndexPc}
+          showMarketIndexMobile={showMarketIndexMobile}
         />
       )}
 
@@ -4844,6 +4903,7 @@ export default function HomePage() {
             setLoginSuccess('');
             setLoginEmail('');
             setLoginOtp('');
+            setLoginLoading(false);
           }}
           loginEmail={loginEmail}
           setLoginEmail={setLoginEmail}
@@ -4854,6 +4914,7 @@ export default function HomePage() {
           loginSuccess={loginSuccess}
           handleSendOtp={handleSendOtp}
           handleVerifyEmailOtp={handleVerifyEmailOtp}
+          handleGithubLogin={isSupabaseConfigured ? handleGithubLogin : undefined}
         />
       )}
 
