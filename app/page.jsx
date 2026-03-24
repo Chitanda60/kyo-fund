@@ -43,6 +43,7 @@ import DonateModal from "./components/DonateModal";
 import FeedbackModal from "./components/FeedbackModal";
 import GroupManageModal from "./components/GroupManageModal";
 import GroupModal from "./components/GroupModal";
+import GroupDropdown from "./components/GroupDropdown";
 import HoldingEditModal from "./components/HoldingEditModal";
 import HoldingActionModal from "./components/HoldingActionModal";
 import LoginModal from "./components/LoginModal";
@@ -174,6 +175,7 @@ export default function HomePage() {
   const [groupModalOpen, setGroupModalOpen] = useState(false);
   const [groupManageOpen, setGroupManageOpen] = useState(false);
   const [addFundToGroupOpen, setAddFundToGroupOpen] = useState(false);
+  const [groupDropdownOpen, setGroupDropdownOpen] = useState(false);
 
   const DEFAULT_SORT_RULES = [
     { id: 'default', label: '默认', enabled: true },
@@ -4107,6 +4109,16 @@ export default function HomePage() {
                   </AnimatePresence>
                 </div>
               </div>
+
+              {/* 分组下拉查看按钮 */}
+              <GroupDropdown
+                groups={groups}
+                currentTab={currentTab}
+                onTabChange={setCurrentTab}
+                isOpen={groupDropdownOpen}
+                onToggle={setGroupDropdownOpen}
+              />
+
               {groups.length > 0 && (
                 <button
                   className="icon-button manage-groups-btn"

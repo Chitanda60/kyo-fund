@@ -1,0 +1,83 @@
+.groupDropdownMenu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 180px;
+  max-height: 320px;
+  overflow: auto;
+  background: rgba(15, 23, 42, 0.95);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 8px;
+  z-index: 100;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
+}
+
+.groupDropdownHeader {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+}
+
+.groupDropdownItem {
+  width: 100%;
+  text-align: left;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  transition: all 0.15s ease;
+}
+
+.groupDropdownItem:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.groupDropdownItem.active {
+  background: rgba(14, 165, 233, 0.15);
+  color: var(--primary);
+}
+
+.groupDropdownItemName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 120px;
+}
+
+.groupDropdownItemCount {
+  font-size: 11px;
+  color: var(--muted);
+  margin-left: 8px;
+}
+
+.groupDropdownDivider {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0;
+}
+
+/* 亮色主题适配 - 通过 :global 选择器 */
+:global([data-theme="light"]) .groupDropdownMenu {
+  background: rgba(255, 255, 255, 0.98) !important;
+  border: 1px solid var(--border) !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.1) !important;
+}
+
+:global([data-theme="light"]) .groupDropdownItem:hover {
+  background: rgba(0, 0, 0, 0.05) !important;
+}
+
+:global([data-theme="light"]) .groupDropdownItem.active {
+  background: rgba(14, 165, 233, 0.1) !important;
+}
